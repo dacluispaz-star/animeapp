@@ -219,6 +219,14 @@ async function animeflvServers(episodeSlug) {
     const resolvedServers = await Promise.all(videos.map(async (srv) => {
       const direct = await resolveDirectLink(srv.server, srv.url);
       if (direct) {
+        return { ...srv, directUrl: direct.url, isM3U8: direct.isM3U8, quality: direct.quality };
+      }
+      return srv;
+    }));
+    return { servers: resolvedServers };
+  });
+}
+
 // ── Anilist Discovery ──
 
 app.get('/anime/trending', async (_, res) => {
@@ -266,32 +274,25 @@ app.get('/anime/servers/:episodeSlug(*)', async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-const PORT = process.env.PORT || 3001;
-});
-
 // ─── DIRECT STREAMING (Anify/Zoro) ───────────────────────────────────────────
 
 async function getDirectStream(anilistId, epNum) {
   try {
-    // 1. Obtener info y mappings de Anify
     const infoUrl = `https://api.anify.tv/info/${anilistId}`;
     const infoRes = await axios.get(infoUrl);
     const data = infoRes.data;
 
-    // 2. Buscar proveedor "zoro" (AniWatch)
     const episodes = data.episodes || [];
     const zoro = episodes.find(p => p.id === 'zoro' || p.id === 'aniwatch');
     
     if (!zoro) return null;
 
-    // 3. Obtener links
     const watchUrl = `https://api.anify.tv/watch/${data.id}/${epNum}/zoro`;
     const watchRes = await axios.get(watchUrl);
     const sources = watchRes.data;
 
     if (!sources || !sources.sources) return null;
 
-    // 4. Filtrar Subtítulos en ESPAÑOL
     const spanishSubs = (sources.subtitles || []).find(s => 
       s.lang.toLowerCase().includes('spanish') || 
       s.lang.toLowerCase().includes('latino')
@@ -336,3 +337,11 @@ function cached(key, ttl, fn) {
     return data;
   });
 }
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`\n⛩  AniPlay ANIME-ONLY en http://localhost:${PORT}`);
+  console.log(`\n  Fuentes:`);
+  console.log(`  ├─ Descubrimiento: Anilist (GraphQL)`);
+  console.log(`  └─ Streaming:      AnimeFLV + Anify Direct\n`);
+});
