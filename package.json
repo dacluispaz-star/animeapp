@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index-v3.js",
     "start:scraper": "node index.js",
-    "dev": "nodemon index-v3.js"
+    "dev": "nodemon index-v3.js",
+    "keep-alive": "node keep-alive.js"
   },
   "dependencies": {
     "@consumet/extensions": "^1.8.8",
