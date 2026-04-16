@@ -16,6 +16,7 @@ const cors    = require('cors');
 const axios   = require('axios');
 const cheerio = require('cheerio');
 const { resolveDirectLink } = require('./extractors');
+const consumet = require('./consumet-provider');
 
 const app = express();
 app.use(cors());
@@ -55,6 +56,32 @@ const EMBED_PROVIDERS = {
     (id, s, e) => `https://autoembed.co/tv/tmdb/${id}-${s}-${e}`,
   ],
 };
+
+// ─── CONSUMET ROUTES (DIRECT STREAMING) ──────────────────────────────────────
+
+app.get('/api/consumet/search', async (req, res) => {
+  const { q } = req.query;
+  if (!q) return res.json([]);
+  const results = await consumet.searchAnime(q);
+  res.json(results);
+});
+
+app.get('/api/consumet/info/:id', async (req, res) => {
+  const { id } = req.params;
+  const info = await consumet.getAnimeInfo(id);
+  res.json(info);
+});
+
+app.get('/api/consumet/sources/:episodeId', async (req, res) => {
+  const { episodeId } = req.params;
+  const sources = await consumet.getEpisodeSources(episodeId);
+  res.json(sources);
+});
+
+// ─── START ───────────────────────────────────────────────────────────────────
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`✓ Servidor corriendo en puerto ${PORT}`));
 
 // ─── CACHE ───────────────────────────────────────────────────────────────────
 
