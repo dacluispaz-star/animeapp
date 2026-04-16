@@ -227,21 +227,42 @@ async function animeflvServers(episodeSlug) {
   });
 }
 
-// ── Anilist Discovery ──
+// ── Anilist Discovery (Filtered) ──
 
 app.get('/anime/trending', async (_, res) => {
-  try { res.json(await getAnilistTrending()); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const items = await getAnilistTrending();
+    const filtered = await filterAvailable(items);
+    res.json(filtered);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/anime/popular', async (_, res) => {
-  try { res.json(await getAnilistPopular()); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const items = await getAnilistPopular();
+    const filtered = await filterAvailable(items);
+    res.json(filtered);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/anime/movies', async (_, res) => {
-  try { res.json(await getAnilistMovies()); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const items = await getAnilistMovies();
+    const filtered = await filterAvailable(items);
+    res.json(filtered);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Mapeo ID Anilist -> Slug AnimeFLV ──
+
+app.get('/anime/map/:anilistId', async (req, res) => {
+  const { anilistId } = req.params;
+  const title = req.query.title;
+  if (!title) return res.status(400).json({ error: 'title required' });
+  
+  const slug = await findAnimeFLVSlug(anilistId, title);
+  if (!slug) return res.status(404).json({ error: 'No mapping found' });
+  res.json({ slug });
 });
 
 // ── Catálogos (AnimeFLV) ──
@@ -286,29 +307,36 @@ async function getDirectStream(anilistId, epNum) {
     const infoRes = await axios.get(infoUrl);
     const data = infoRes.data;
 
-    const episodes = data.episodes || [];
-    const zoro = episodes.find(p => p.id === 'zoro' || p.id === 'aniwatch');
-    
-    if (!zoro) return null;
+    const providers = (data.episodes || []).map(p => p.id);
+    // Prioridad: Zoro/Aniwatch es el que mejor maneja subs
+    const sortedProviders = ['zoro', 'aniwatch', 'gogoanime', 'animepahe'].filter(p => providers.includes(p));
 
-    const watchUrl = `https://api.anify.tv/watch/${data.id}/${epNum}/zoro`;
-    const watchRes = await axios.get(watchUrl);
-    const sources = watchRes.data;
+    for (const providerId of sortedProviders) {
+      try {
+        const watchUrl = `https://api.anify.tv/watch/${data.id}/${epNum}/${providerId}`;
+        const watchRes = await axios.get(watchUrl);
+        const sources = watchRes.data;
 
-    if (!sources || !sources.sources) return null;
+        if (!sources || !sources.sources || sources.sources.length === 0) continue;
 
-    const spanishSubs = (sources.subtitles || []).find(s => 
-      s.lang.toLowerCase().includes('spanish') || 
-      s.lang.toLowerCase().includes('latino')
-    );
+        const spanishSubs = (sources.subtitles || []).find(s => {
+          const l = s.lang.toLowerCase();
+          return l.includes('spanish') || l.includes('latino') || l.includes('español') || l.includes('spa') || l.includes('esp');
+        });
 
-    if (!spanishSubs) return null;
-
-    return {
-      sources: sources.sources,
-      subtitles: sources.subtitles,
-      preferredSub: spanishSubs.url
-    };
+        if (spanishSubs) {
+          return {
+            sources: sources.sources,
+            subtitles: sources.subtitles,
+            preferredSub: spanishSubs.url,
+            providerId
+          };
+        }
+      } catch (innerE) {
+        console.log(`[Direct Provider Error] ${providerId}:`, innerE.message);
+      }
+    }
+    return null;
   } catch (e) {
     console.error('[Direct Stream Error]', e.message);
     return null;
@@ -342,10 +370,42 @@ function cached(key, ttl, fn) {
   });
 }
 
+const mappingCache = new Map();
+
+async function findAnimeFLVSlug(anilistId, title) {
+  if (mappingCache.has(anilistId)) return mappingCache.get(anilistId);
+  
+  try {
+    const results = await animeflvSearch(title);
+    if (results && results.length > 0) {
+      // Intentar encontrar el mejor match (por ahora el primero ya es bueno)
+      const slug = results[0].id;
+      mappingCache.set(anilistId, slug);
+      return slug;
+    }
+  } catch (e) { console.error(`[Map Error] ${title}:`, e.message); }
+  return null;
+}
+
+async function filterAvailable(items) {
+  const result = [];
+  // Procesamos en grupos de 5 para no saturar
+  for (let i = 0; i < items.length; i += 5) {
+    const chunk = items.slice(i, i + 5);
+    const checked = await Promise.all(chunk.map(async (item) => {
+      const slug = await findAnimeFLVSlug(item.anilistId, item.title);
+      return slug ? { ...item, slug } : null;
+    }));
+    result.push(...checked.filter(Boolean));
+    if (result.length >= 12) break; // Con 12 sugerencias es suficiente y rápido
+  }
+  return result;
+}
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`\n⛩  AniPlay ANIME-ONLY en http://localhost:${PORT}`);
   console.log(`\n  Fuentes:`);
-  console.log(`  ├─ Descubrimiento: Anilist (GraphQL)`);
+  console.log(`  ├─ Descubrimiento: Anilist + Auto-Mapping`);
   console.log(`  └─ Streaming:      AnimeFLV + Anify Direct\n`);
 });
