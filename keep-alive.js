@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 // Tu URL de Render
-const URL = 'https://animeapp-z49m.onrender.com/api/consumet/search?q=ping';
+const URL = 'https://animeapp-z49m.onrender.com/ping';
 
 console.log('🚀 Monitor Keep-Alive iniciado...');
 console.log(`📡 Enviando ping a: ${URL} cada 14 minutos.`);

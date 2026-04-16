@@ -321,7 +321,9 @@ async function animeflvServers(episodeSlug) {
 
 // ─── ROUTES ──────────────────────────────────────────────────────────────────
 
+app.get('/ping', (_, res) => res.send('pong'));
 app.get('/health', (_, res) => res.json({ ok: true, version: '3.1-fixed' }));
+
 
 // ── Catálogos ──
 
