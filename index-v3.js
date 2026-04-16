@@ -269,6 +269,10 @@ app.get('/anime/:slug/episodes', async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/', (req, res) => {
+  res.json({ status: 'online', service: 'AniPlay-Backend', version: '4.5' });
+});
+
 app.get('/anime/servers/:episodeSlug(*)', async (req, res) => {
   try { res.json(await animeflvServers(req.params.episodeSlug)); }
   catch (e) { res.status(500).json({ error: e.message }); }
