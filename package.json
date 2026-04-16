@@ -10,7 +10,6 @@
     "keep-alive": "node keep-alive.js"
   },
   "dependencies": {
-    "@consumet/extensions": "^1.8.8",
     "axios": "^1.6.0",
     "cheerio": "^1.0.0",
     "cors": "^2.8.5",

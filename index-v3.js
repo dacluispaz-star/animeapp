@@ -16,7 +16,6 @@ const cors    = require('cors');
 const axios   = require('axios');
 const cheerio = require('cheerio');
 const { resolveDirectLink } = require('./extractors');
-const consumet = require('./consumet-provider');
 
 const app = express();
 app.use(cors());
