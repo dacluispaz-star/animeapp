@@ -203,26 +203,36 @@ async function animeflvServers(episodeSlug) {
           const parsed = JSON.parse(m[1]);
           for (const [lang, srvs] of Object.entries(parsed)) {
             for (const srv of srvs) {
-              videos.push({
-                lang,
-                server: srv.title || srv.server || 'Unknown',
-                url: srv.code || srv.url || '',
-                type: 'iframe',
-              });
+              const name = (srv.title || srv.server || '').toLowerCase();
+              // Solo dejar Streamwish
+              if (name.includes('streamwish') || name.includes('wish')) {
+                videos.push({
+                  lang,
+                  server: srv.title || srv.server || 'Streamwish',
+                  url: srv.code || srv.url || '',
+                  type: 'iframe',
+                });
+              }
             }
           }
         } catch (_) {}
       }
     });
     
-    // Intentar resolver links directos para servidores compatibles
+    // Intentar resolver link directo para Streamwish con un tiempo límite estricto
     const resolvedServers = await Promise.all(videos.map(async (srv) => {
-      const direct = await resolveDirectLink(srv.server, srv.url);
-      if (direct) {
-        return { ...srv, directUrl: direct.url, isM3U8: direct.isM3U8, quality: direct.quality };
-      }
+      try {
+        const direct = await Promise.race([
+          resolveDirectLink(srv.server, srv.url),
+          new Promise(r => setTimeout(() => r(null), 2000))
+        ]);
+        if (direct) {
+          return { ...srv, directUrl: direct.url, isM3U8: direct.isM3U8, quality: direct.quality };
+        }
+      } catch (e) {}
       return srv;
     }));
+
     return { servers: resolvedServers };
   });
 }
@@ -253,6 +263,68 @@ app.get('/anime/movies', async (_, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/anime/calendar', async (_, res) => {
+  console.log('--- Solicitud de Calendario recibida ---');
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const endOfWeek = now + (7 * 24 * 60 * 60);
+    const query = `query ($start: Int, $end: Int) {
+      Page(page: 1, perPage: 50) {
+        airingSchedules(airingAt_greater: $start, airingAt_less: $end, sort: TIME) {
+          airingAt
+          episode
+          media { ${ANIME_FIELDS} }
+        }
+      }
+    }`;
+    
+    const response = await axios.post(ANILIST, 
+      { query, variables: { start: now, end: endOfWeek } },
+      { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' } }
+    );
+    
+    const schedules = response.data?.data?.Page?.airingSchedules || [];
+    console.log(`Encontrados ${schedules.length} estrenos en el calendario.`);
+    
+    // Group by day
+    const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const calendar = {};
+    schedules.forEach(s => {
+      const date = new Date(s.airingAt * 1000);
+      const dayName = days[date.getDay()];
+      if (!calendar[dayName]) calendar[dayName] = [];
+      calendar[dayName].push({
+        ...formatAnilist(s.media),
+        airingAt: s.airingAt,
+        episode: s.episode
+      });
+    });
+    res.json(calendar);
+  } catch (e) { 
+    console.error('[Error Calendario]', e.message);
+    res.status(500).json({ error: e.message }); 
+  }
+});
+
+app.get('/anime/seasonal', async (req, res) => {
+  const { season, year } = req.query;
+  console.log(`--- Solicitud Estacional: ${season} ${year} ---`);
+  try {
+    const query = `query ($season: MediaSeason, $year: Int) {
+      Page(page: 1, perPage: 30) {
+        media(season: $season, seasonYear: $year, type: ANIME, sort: POPULARITY_DESC, isAdult: false) { ${ANIME_FIELDS} }
+      }
+    }`;
+    const items = await anilistQuery(query, { season, year: parseInt(year) });
+    console.log(`Encontrados ${items.length} animes para la temporada.`);
+    const formatted = items.map(formatAnilist);
+    res.json(formatted);
+  } catch (e) { 
+    console.error('[Error Estacional]', e.message);
+    res.status(500).json({ error: e.message }); 
+  }
+});
+
 // ── Mapeo ID Anilist -> Slug AnimeFLV ──
 
 app.get('/anime/map/:anilistId', async (req, res) => {
@@ -275,12 +347,36 @@ app.get('/catalog/anime', async (req, res) => {
 // ── Búsqueda Unificada (Anime Only) ──
 
 app.get('/search', async (req, res) => {
-  const { q } = req.query;
+  const { q, sort, status, format } = req.query;
   if (!q) return res.status(400).json({ error: 'q required' });
   try {
-    const results = await animeflvSearch(q);
-    res.json({ anime: results, movies: [], series: [] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    // Primero buscar en Anilist para obtener metadata rica y filtros
+    const query = `query ($search: String, $sort: [MediaSort], $status: MediaStatus, $format: MediaFormat) {
+      Page(page: 1, perPage: 20) {
+        media(search: $search, sort: $sort, status: $status, format: $format, type: ANIME, isAdult: false) { ${ANIME_FIELDS} }
+      }
+    }`;
+    const items = await anilistQuery(query, { 
+      search: q, 
+      sort: sort ? [sort] : ['POPULARITY_DESC'],
+      status: status || undefined,
+      format: format || undefined
+    });
+    
+    const formatted = items.map(formatAnilist);
+    // Filtrar los que están disponibles en AnimeFLV (opcional, pero mejora UX)
+    const available = await filterAvailable(formatted);
+    
+    res.json({ anime: available, movies: [], series: [] });
+  } catch (e) { 
+    // Fallback a búsqueda directa en AnimeFLV si Anilist falla
+    try {
+      const results = await animeflvSearch(q);
+      res.json({ anime: results, movies: [], series: [] });
+    } catch (err) {
+      res.status(500).json({ error: e.message }); 
+    }
+  }
 });
 
 // ── Anime: episodios y servidores ──
@@ -304,20 +400,20 @@ app.get('/anime/servers/:episodeSlug(*)', async (req, res) => {
 async function getDirectStream(anilistId, epNum) {
   try {
     const infoUrl = `https://api.anify.tv/info/${anilistId}`;
-    const infoRes = await axios.get(infoUrl);
+    const infoRes = await axios.get(infoUrl, { timeout: 5000 });
     const data = infoRes.data;
 
-    const providers = (data.episodes || []).map(p => p.id);
-    // Prioridad: Zoro/Aniwatch es el que mejor maneja subs
-    const sortedProviders = ['zoro', 'aniwatch', 'gogoanime', 'animepahe'].filter(p => providers.includes(p));
+    const providerIds = (data.episodes || []).map(p => p.id);
+    const sortedProviders = ['zoro', 'aniwatch', 'gogoanime', 'animepahe'].filter(p => providerIds.includes(p));
 
-    for (const providerId of sortedProviders) {
+    // Intentar todos los proveedores en paralelo y tomar el primero que tenga subs en español
+    const results = await Promise.all(sortedProviders.map(async (providerId) => {
       try {
         const watchUrl = `https://api.anify.tv/watch/${data.id}/${epNum}/${providerId}`;
-        const watchRes = await axios.get(watchUrl);
+        const watchRes = await axios.get(watchUrl, { timeout: 5000 });
         const sources = watchRes.data;
 
-        if (!sources || !sources.sources || sources.sources.length === 0) continue;
+        if (!sources || !sources.sources || sources.sources.length === 0) return null;
 
         const spanishSubs = (sources.subtitles || []).find(s => {
           const l = s.lang.toLowerCase();
@@ -332,11 +428,13 @@ async function getDirectStream(anilistId, epNum) {
             providerId
           };
         }
-      } catch (innerE) {
-        console.log(`[Direct Provider Error] ${providerId}:`, innerE.message);
+      } catch (e) {
+        return null;
       }
-    }
-    return null;
+      return null;
+    }));
+
+    return results.find(r => r !== null) || null;
   } catch (e) {
     console.error('[Direct Stream Error]', e.message);
     return null;
