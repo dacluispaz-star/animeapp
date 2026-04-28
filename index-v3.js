@@ -264,7 +264,7 @@ app.get('/anime/movies', async (_, res) => {
 });
 
 app.get('/anime/calendar', async (_, res) => {
-  console.log('--- Solicitud de Calendario recibida ---');
+  console.log('--- Solicitud de Calendario ---');
   try {
     const now = Math.floor(Date.now() / 1000);
     const endOfWeek = now + (7 * 24 * 60 * 60);
@@ -273,26 +273,41 @@ app.get('/anime/calendar', async (_, res) => {
         airingSchedules(airingAt_greater: $start, airingAt_less: $end, sort: TIME) {
           airingAt
           episode
-          media { ${ANIME_FIELDS} }
+          media {
+            id
+            title { romaji english native }
+            coverImage { extraLarge large }
+            bannerImage
+            averageScore
+            seasonYear
+            description
+            format
+          }
         }
       }
     }`;
     
     const response = await axios.post(ANILIST, 
       { query, variables: { start: now, end: endOfWeek } },
-      { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json' } }
     );
     
-    const schedules = response.data?.data?.Page?.airingSchedules || [];
-    console.log(`Encontrados ${schedules.length} estrenos en el calendario.`);
+    const schedules = response.data?.data?.Page?.airingSchedules;
+    if (!schedules) {
+      console.log('Anilist no devolvió programación.');
+      return res.json({});
+    }
+
+    console.log(`Recibidos ${schedules.length} eventos de Anilist.`);
     
-    // Group by day
     const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     const calendar = {};
     schedules.forEach(s => {
+      if (!s.media) return;
       const date = new Date(s.airingAt * 1000);
       const dayName = days[date.getDay()];
       if (!calendar[dayName]) calendar[dayName] = [];
+      
       calendar[dayName].push({
         ...formatAnilist(s.media),
         airingAt: s.airingAt,
@@ -301,8 +316,8 @@ app.get('/anime/calendar', async (_, res) => {
     });
     res.json(calendar);
   } catch (e) { 
-    console.error('[Error Calendario]', e.message);
-    res.status(500).json({ error: e.message }); 
+    console.error('[Error Calendario]', e.response?.data || e.message);
+    res.status(500).json({ error: 'Error al obtener calendario de Anilist' }); 
   }
 });
 
