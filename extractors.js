@@ -14,7 +14,8 @@ async function resolveFembed(url) {
     const domain = new URL(url).origin;
     
     const res = await axios.post(`${domain}/api/source/${id}`, {}, {
-      headers: { 'User-Agent': UA, 'X-Requested-With': 'XMLHttpRequest' }
+      headers: { 'User-Agent': UA, 'X-Requested-With': 'XMLHttpRequest' },
+      timeout: 4000
     });
     
     if (res.data && res.data.success) {
@@ -37,7 +38,7 @@ async function resolveFembed(url) {
  */
 async function resolveOkru(url) {
   try {
-    const res = await axios.get(url, { headers: { 'User-Agent': UA } });
+    const res = await axios.get(url, { headers: { 'User-Agent': UA }, timeout: 4000 });
     const $ = cheerio.load(res.data);
     const dataOptions = $('div[data-options]').attr('data-options');
     
@@ -66,6 +67,76 @@ async function resolveOkru(url) {
 }
 
 /**
+ * Extractor para Streamwish (y clones como awish, wishembed)
+ */
+async function resolveStreamwish(url) {
+  try {
+    const domain = new URL(url).origin;
+    const res = await axios.get(url, { 
+      headers: { 
+        'User-Agent': UA,
+        'Referer': 'https://www4.animeflv.net/',
+        'Origin': 'https://www4.animeflv.net',
+        'Sec-Fetch-Dest': 'iframe',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'cross-site'
+      },
+      timeout: 2000
+    });
+    const source = res.data;
+    
+    // Si todavía muestra "Loading", es que el Referer no fue suficiente o cambió el script
+    if (source.includes('Page is loading')) {
+       console.log('[Extractor Streamwish] Landing page detected, attempt bypass...');
+       // A veces requieren una cookie que se pone en una segunda petición
+       // Pero con el Referer correcto suele bastar. Intentamos regex de nuevo por si acaso.
+    }
+
+    const m3u8Match = source.match(/file:\s*"([^"]+\.m3u8[^"]*)"/) || 
+                     source.match(/sources:\s*\[\s*{\s*file:\s*"([^"]+\.m3u8[^"]*)"/);
+    
+    if (m3u8Match) {
+      return {
+        url: m3u8Match[1],
+        quality: '720p/1080p',
+        isM3U8: true
+      };
+    }
+  } catch (e) {
+    console.error('[Extractor Streamwish] Error:', e.message);
+  }
+  return null;
+}
+
+/**
+ * Extractor para Voe
+ */
+async function resolveVoe(url) {
+  try {
+    const res = await axios.get(url, { 
+      headers: { 
+        'User-Agent': UA,
+        'Referer': 'https://www4.animeflv.net/',
+      },
+      timeout: 4000
+    });
+    const source = res.data;
+    
+    const hlsMatch = source.match(/"hls":\s*"([^"]+)"/);
+    if (hlsMatch) {
+      return {
+        url: hlsMatch[1],
+        quality: 'Original',
+        isM3U8: true
+      };
+    }
+  } catch (e) {
+    console.error('[Extractor Voe] Error:', e.message);
+  }
+  return null;
+}
+
+/**
  * Resolver unívoco que intenta extraer el link directo si el servidor es soportado
  */
 async function resolveDirectLink(serverName, url) {
@@ -77,6 +148,14 @@ async function resolveDirectLink(serverName, url) {
   
   if (name.includes('okru')) {
     return await resolveOkru(url);
+  }
+
+  if (name.includes('streamwish') || name.includes('wish')) {
+    return await resolveStreamwish(url);
+  }
+
+  if (name.includes('voe')) {
+    return await resolveVoe(url);
   }
 
   return null;

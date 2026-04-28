@@ -84,13 +84,14 @@ async function getAnilistMovies() {
 }
 
 function formatAnilist(item) {
+  if (!item) return {};
   return {
     id: `anilist-${item.id}`,
     anilistId: item.id,
-    title: item.title.romaji || item.title.english || item.title.native,
+    title: item.title?.romaji || item.title?.english || item.title?.native || 'Sin título',
     type: 'anime',
     mediaType: 'anime',
-    poster: item.coverImage.extraLarge || item.coverImage.large,
+    poster: item.coverImage?.extraLarge || item.coverImage?.large || '',
     backdrop: item.bannerImage || '',
     overview: item.description?.replace(/<[^>]*>?/gm, '') || '',
     rating: item.averageScore ? (item.averageScore / 10).toFixed(1) : '',
@@ -204,20 +205,22 @@ async function animeflvServers(episodeSlug) {
           for (const [lang, srvs] of Object.entries(parsed)) {
             for (const srv of srvs) {
               const name = (srv.title || srv.server || '').toLowerCase();
-              // Solo dejar Streamwish
-              if (name.includes('streamwish') || name.includes('wish')) {
-                videos.push({
-                  lang,
-                  server: srv.title || srv.server || 'Streamwish',
-                  url: srv.code || srv.url || '',
-                  type: 'iframe',
-                });
-              }
+              // Priorizamos Streamwish, pero dejamos los demás como fallback
+              videos.push({
+                lang,
+                server: srv.title || srv.server || 'Server',
+                url: srv.code || srv.url || '',
+                type: 'iframe',
+                isPriority: name.includes('streamwish') || name.includes('wish')
+              });
             }
           }
         } catch (_) {}
       }
     });
+    
+    // Ordenar: Priority primero
+    videos.sort((a, b) => b.isPriority - a.isPriority);
     
     // Intentar resolver link directo para Streamwish con un tiempo límite estricto
     const resolvedServers = await Promise.all(videos.map(async (srv) => {
@@ -457,9 +460,16 @@ async function getDirectStream(anilistId, epNum) {
 }
 
 app.get('/anime/stream-direct/:anilistId/:episode', async (req, res) => {
-  const { anilistId, episode } = req.params;
-  const result = await getDirectStream(anilistId, episode);
-  if (!result) return res.status(404).json({ error: 'No direct source with Spanish subs found' });
+  let { anilistId, episode } = req.params;
+  // Limpiar ID por si viene con prefijo
+  const cleanId = anilistId.replace('anilist-', '');
+  console.log(`[Direct] Buscando stream directo para Anilist: ${cleanId}, Ep: ${episode}`);
+  
+  const result = await getDirectStream(cleanId, episode);
+  if (!result) {
+    console.log('[Direct] No se encontró fuente directa con subtítulos en español.');
+    return res.status(404).json({ error: 'No direct source with Spanish subs found' });
+  }
   res.json(result);
 });
 
